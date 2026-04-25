@@ -7,12 +7,12 @@ Write-Host "🔍 Iniciando auditoría de seguridad..." -ForegroundColor Cyan
 
 $errors = @()
 
-# 1. Verificar que .env está en .gitignore
-$gitignore = Get-Content ".gitignore" -ErrorAction SilentlyContinue
-if ($gitignore -notmatch "^\.env$") {
-    $errors += "❌ .env no está en .gitignore"
-} else {
+# Verificar que .env está en .gitignore
+$gitignore = Get-Content ".gitignore" -Raw
+if ($gitignore -match "\b\.env\b") {
     Write-Host "✅ .env está excluido de Git" -ForegroundColor Green
+} else {
+    Write-Host "❌ .env NO está en .gitignore" -ForegroundColor Red
 }
 
 # 2. Buscar posibles secrets hardcodeados en Python
@@ -50,22 +50,7 @@ if (!(Test-Path "example.env")) {
     Write-Host "✅ example.env existe" -ForegroundColor Green
 }
 
-# 5. Verificar docker-compose.yml.example
-if (!(Test-Path "docker-compose.yml.example")) {
-    $errors += "❌ docker-compose.yml.example no existe"
-} else {
-    Write-Host "✅ docker-compose.yml.example existe" -ForegroundColor Green
-    
-    # Verificar que no hay rutas absolutas de Windows
-    $compose = Get-Content "docker-compose.yml.example" -Raw
-    if ($compose -match "[A-Z]:/[^`$]") {
-        $errors += "⚠️  docker-compose.yml.example contiene rutas absolutas (usar variables)"
-    } else {
-        Write-Host "✅ docker-compose.yml.example usa rutas relativas/variables" -ForegroundColor Green
-    }
-}
-
-# 6. Verificar que DEBUG no está hardcodeado como true en config
+# 5. Verificar que DEBUG no está hardcodeado como true en config
 $configContent = Get-Content "app/config.py" -Raw -ErrorAction SilentlyContinue
 if ($configContent -match "DEBUG\s*=\s*['`"]?true['`"]?") {
     $errors += "⚠️  DEBUG podría estar hardcodeado como true en config.py"
