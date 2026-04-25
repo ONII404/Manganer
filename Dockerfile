@@ -9,17 +9,20 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR $APP_HOME
 
 # =============================================================================
-# 1. Dependencias del sistema (libvips + unrar)
+# 1. Dependencias del sistema (libvips + unrar con repo non-free)
 # =============================================================================
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    ca-certificates \
-    libvips \
-    libvips-tools \
-    libvips-dev \
-    unrar \
-    build-essential \
-    pkg-config \
+    curl ca-certificates gnupg \
+    && echo "deb http://deb.debian.org/debian bookworm main contrib non-free" > /etc/apt/sources.list \
+    && echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free" >> /etc/apt/sources.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libvips \
+        libvips-tools \
+        libvips-dev \
+        unrar \
+        build-essential \
+        pkg-config \
     && rm -rf /var/lib/apt/lists/* \
     && ldconfig
 
@@ -34,17 +37,15 @@ RUN pip install --no-cache-dir pyvips>=2.2.0
 # =============================================================================
 # 3. Código de la aplicación
 # =============================================================================
-# Copiar app/ (siempre debe existir)
 COPY app/ ./app/
 
-# ✅ Copiar Alembic SOLO si los archivos existen (sin fallar si no)
-# Usamos RUN con bash para copiar condicionalmente
+# Copiar Alembic SOLO si los archivos existen (sin fallar si no)
 RUN bash -c '[[ -f alembic.ini ]] && cp alembic.ini ./ || true'
 RUN bash -c '[[ -f alembic/env.py ]] && mkdir -p ./alembic && cp alembic/env.py ./alembic/ || true'
 RUN bash -c '[[ -f alembic/script.py.mako ]] && cp alembic/script.py.mako ./alembic/ || true'
 RUN bash -c '[[ -d alembic/versions ]] && cp -r alembic/versions ./alembic/ || true'
 
-# ✅ Crear estructura mínima de alembic si no existe (para imports de Python)
+# Crear estructura mínima de alembic si no existe
 RUN mkdir -p /app/alembic/versions && \
     touch /app/alembic/__init__.py && \
     echo "# Minimal env.py for Manganer" > /app/alembic/env.py && \
