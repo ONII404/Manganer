@@ -236,3 +236,5 @@ settings.local.py
 !.github/workflows/ci.yml
 !.github/workflows/deploy.yml
 README.md
+docker-compose.yml
+docker-compose.yml

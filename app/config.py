@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     WORKERS: int = 4
     DB_URL: str = "sqlite:///./data/manganer.db"
     DATA_DIR: Path = Path("/app/data")
+    LIBRARY_DIR: str = "/app/library"
     REDIS_URL: str = "redis://redis:6379/0"
     MAX_MEMORY_MB: int = 1200
     
