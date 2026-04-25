@@ -1,59 +1,73 @@
 # =============================================================================
 # Manganer - docker-compose.yml
-# Configurable vía .env - Seguro para GitHub
+# =============================================================================
+# 📚 Biblioteca de manga con escaneo automático, OPDS y frontend React
+# 
+# 🔧 CONFIGURACIÓN:
+#   1. Copia example.env a .env y personaliza tus rutas/API keys
+#   2. Ejecuta: docker compose up -d
+#   3. Accede a: http://localhost:${API_PORT:-8000}
+#
+# 🔐 SEGURIDAD:
+#   - NUNCA commitees tu .env con secrets reales
+#   - Este archivo usa variables de entorno, seguro para GitHub
+#   - Rutas locales se configuran en .env, no aquí
 # =============================================================================
 
 services:
   # ---------------------------------------------------------------------------
   # API + Frontend (FastAPI + React estático)
   # ---------------------------------------------------------------------------
+  # 🌐 Expone el frontend web y la API REST/OPDS
+  # 🔌 Puerto configurable vía API_PORT en .env (default: 8000)
+  # 📦 Build desde Dockerfile en raíz del proyecto
   api:
     build:
       context: .
       dockerfile: Dockerfile
     ports:
-      # Usa variable con fallback seguro
+      # Formato: "PUERTO_HOST:PUERTO_CONTENEDOR"
+      # Usa variable con fallback: ${VAR:-default}
       - "${API_PORT:-8000}:8000"
     environment:
-      # === Conexiones internas (NO cambiar) ===
+      # === Conexiones internas (NO cambiar, son rutas dentro de Docker) ===
       - DB_URL=sqlite:///./data/manganer.db
       - REDIS_URL=redis://redis:6379/0
-      
-      # === Rutas DENTRO del contenedor (NO cambiar) ===
+      # === Rutas DENTRO del contenedor (fijas, no modificar) ===
       - DATA_DIR=/app/data
       - LIBRARY_DIR=/app/library
       - STATIC_DIR=/app/static
-      
-      # === Configuración escalable (desde .env) ===
+      # === Configuración escalable (personalizar en .env) ===
       - WORKERS=${WORKERS:-4}
       - DEBUG=${DEBUG:-false}
       - DEFAULT_LANG=${DEFAULT_LANG:-es}
-      
-      # === API Keys (desde .env, vacías por defecto = seguro) ===
+      # === API Keys opcionales (definir en .env, dejar vacío si no se usan) ===
       - DEEPL_API_KEY=${DEEPL_API_KEY:-}
       - ANILIST_CLIENT_ID=${ANILIST_CLIENT_ID:-}
       - MAL_CLIENT_ID=${MAL_CLIENT_ID:-}
       - MAL_CLIENT_SECRET=${MAL_CLIENT_SECRET:-}
-      
-      # === OPDS (catálogo para lectores) ===
+      # === OPDS (catálogo para lectores de manga) ===
       - OPDS_PUBLIC=${OPDS_PUBLIC:-true}
       - OPDS_RATE_LIMIT_PER_IP=${OPDS_RATE_LIMIT_PER_IP:-60}
-      
-      # === Autenticación OPDS (opcional, desde .env) ===
+      # === Autenticación básica para OPDS (opcional) ===
+      # Descomentar en .env si OPDS_PUBLIC=false
       - OPDS_BASIC_AUTH_USER=${OPDS_BASIC_AUTH_USER:-}
       - OPDS_BASIC_AUTH_PASSWORD=${OPDS_BASIC_AUTH_PASSWORD:-}
+
     volumes:
-      # === Volúmenes: rutas locales desde .env, rutas internas fijas ===
-      # 🔧 Los usuarios personalizan DATA_PATH, LIBRARY_PATH, etc. en su .env
-      - ${DATA_PATH:-./data}:/app/data
-      - ${LIBRARY_PATH:-./library}:/app/library
-      - ${STATIC_PATH:-./app/static}:/app/static
-      - ${LOGS_PATH:-./logs}:/app/logs
+      # === Volúmenes: mapea rutas locales (de .env) a rutas del contenedor ===
+      # Formato: "RUTA_LOCAL:/ruta/en/contenedor"
+      - "${DATA_PATH:-./data}:/app/data"
+      - "${LIBRARY_PATH:-./library}:/app/library"
+      - "${STATIC_PATH:-./app/static}:/app/static"
+      - "${LOGS_PATH:-./logs}:/app/logs"
     depends_on:
+      # Esperar a que Redis esté saludable antes de iniciar
       redis:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
+      # Verificar que la API responde cada 30s
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
       interval: 30s
       timeout: 10s
@@ -62,22 +76,26 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${API_MEMORY_LIMIT:-1.5G}
+          # Límite de memoria para evitar saturación del sistema
+          # Ajustar según hardware disponible (default: 1.5GB)
+          memory: "${API_MEMORY_LIMIT:-1.5G}"
 
-  # ---------------------------------------------------------------------------
-  # Worker Celery (Tareas en background: escaneo, hashing, metadatos)
-  # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Worker Celery (Tareas en background)
+# ---------------------------------------------------------------------------
+# 🔄 Procesa tareas pesadas sin bloquear la API:
+#    • Escaneo de nuevos archivos .cbz/.cbr
+#    • Cálculo de hashes (SHA-256 + pHash) para deduplicación
+#    • Extracción de portadas y metadatos
+#    • Consultas a APIs externas (AniList, MAL, DeepL)
+# ⚡ Usa Redis como broker de mensajes para la cola de tareas
   worker:
     build:
       context: .
       dockerfile: Dockerfile
-    command: >
-      celery -A app.core.celery_app worker
-      --loglevel=${CELERY_LOGLEVEL:-info}
-      --concurrency=${WORKERS:-4}
-      --pool=prefork
+    command: "celery -A app.core.celery_app worker --loglevel=${CELERY_LOGLEVEL:-info} --concurrency=${WORKERS:-4} --pool=prefork"
     environment:
-      # === Mismas conexiones que API ===
+      # === Mismas conexiones que API para acceder a DB y Redis ===
       - DB_URL=sqlite:///./data/manganer.db
       - REDIS_URL=redis://redis:6379/0
       - DATA_DIR=/app/data
@@ -88,11 +106,11 @@ services:
       - MAL_CLIENT_ID=${MAL_CLIENT_ID:-}
       - MAL_CLIENT_SECRET=${MAL_CLIENT_SECRET:-}
     volumes:
-      # === Mismos volúmenes que API (necesita leer/escribir) ===
-      - ${DATA_PATH:-./data}:/app/data
-      - ${LIBRARY_PATH:-./library}:/app/library
-      - ${STATIC_PATH:-./app/static}:/app/static
-      - ${LOGS_PATH:-./logs}:/app/logs
+      # === Mismos volúmenes que API (necesita leer biblioteca y escribir en DB) ===
+      - "${DATA_PATH:-./data}:/app/data"
+      - "${LIBRARY_PATH:-./library}:/app/library"
+      - "${STATIC_PATH:-./app/static}:/app/static"
+      - "${LOGS_PATH:-./logs}:/app/logs"
     depends_on:
       redis:
         condition: service_healthy
@@ -100,33 +118,42 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${WORKER_MEMORY_LIMIT:-1.5G}
+          # Límite de memoria para workers (ajustar según carga esperada)
+          memory: "${WORKER_MEMORY_LIMIT:-1.5G}"
 
-  # ---------------------------------------------------------------------------
-  # Redis (Broker de mensajes + Caché)
-  # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Redis (Broker de mensajes + Caché)
+# ---------------------------------------------------------------------------
+# 🟥 Funciones:
+#    • Cola de tareas para Celery (mensajería asíncrona)
+#    • Caché LRU para respuestas frecuentes
+#    • Persistencia con append-only file (AOF)
+# ⚙️ Configurado con límites de memoria para evitar OOM
   redis:
     image: redis:7-alpine
-    command: >
-      redis-server
-      --maxmemory ${REDIS_MAXMEMORY:-256mb}
-      --maxmemory-policy allkeys-lru
-      --appendonly yes
+    command: "redis-server --maxmemory ${REDIS_MAXMEMORY:-256mb} --maxmemory-policy allkeys-lru --appendonly yes"
     healthcheck:
+      # Verificar que Redis responde a PING
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 3
     volumes:
-      # Volumen nombrado para persistencia (no depende de ruta local)
-      - redis_/data
+      # Volumen nombrado para persistencia de datos de Redis
+      # No depende de rutas locales = más portable entre sistemas
+      - redis_data:/data
     deploy:
       resources:
         limits:
-          memory: ${REDIS_MEMORY_LIMIT:-512M}
+          # Límite de memoria para Redis (caché + cola)
+          memory: "${REDIS_MEMORY_LIMIT:-512M}"
 
 # =============================================================================
 # Volúmenes nombrados (persisten entre docker compose down/up)
 # =============================================================================
+# 🗄️ redis_data: Almacena datos de Redis (cola de tareas + caché persistente)
+#    • Se crea automáticamente la primera vez que se ejecuta docker compose up
+#    • No se borra con docker compose down (usar -v para eliminar)
+#    • Recomendado hacer backup periódico si se usa para datos críticos
 volumes:
-  redis_
+  redis_data:

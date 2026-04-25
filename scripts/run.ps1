@@ -29,7 +29,16 @@ if ($Help) {
     exit 0
 }
 
-$ProjectRoot = $PSScriptRoot
+# =============================================================================
+# 🔧 CORRECCIÓN: Detectar la raíz del proyecto
+# Si el script está en /scripts/, usamos el directorio padre (..)
+# =============================================================================
+if ($PSScriptRoot.EndsWith("\scripts") -or $PSScriptRoot.EndsWith("/scripts")) {
+    $ProjectRoot = Split-Path $PSScriptRoot -Parent
+} else {
+    $ProjectRoot = $PSScriptRoot
+}
+
 $FrontendDir = Join-Path $ProjectRoot "frontend"
 $StaticDir = Join-Path $ProjectRoot "app" "static"
 $DataDir = Join-Path $ProjectRoot "data"
@@ -49,17 +58,10 @@ function Write-Error { param([string]$Message) Write-Host "❌ $Message" -Foregr
 function Write-Warn { param([string]$Message) Write-Host "⚠️  $Message" -ForegroundColor Yellow }
 
 function Test-Command {
-    <#
-    .SYNOPSIS
-        Verifica si un comando está disponible en PATH (compatible con Windows .cmd/.ps1)
-    #>
     param([string]$Command)
-    
-    # Intento 1: Get-Command nativo (funciona para .exe)
     $cmd = Get-Command $Command -ErrorAction SilentlyContinue
     if ($cmd) { return $true }
     
-    # Intento 2: Buscar en PATH manualmente (funciona para .cmd/.ps1/.bat en Windows)
     $pathEnv = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + 
                [Environment]::GetEnvironmentVariable("Path", "User")
     $extensions = @("", ".exe", ".cmd", ".bat", ".ps1")
@@ -72,14 +74,7 @@ function Test-Command {
             }
         }
     }
-    
-    # Intento 3: Ejecutar directamente para ver si responde
-    try {
-        $null = & $Command --version 2>$null
-        return $true
-    } catch {
-        return $false
-    }
+    return $false
 }
 
 function Ensure-Directory {
@@ -107,7 +102,6 @@ function Invoke-Build {
     
     Push-Location $FrontendDir
     try {
-        # ✅ Verificación compatible con Windows
         Write-Step "Verificando entorno Node.js..." "Gray"
         try {
             $nodeVersion = & node --version 2>&1 | Out-String
@@ -144,7 +138,7 @@ function Invoke-Dev {
     
     Write-Step "Modo DESARROLLO (hot-reload)"
     
-    # Configurar proxy de Vite para apuntar a localhost (Windows compatible)
+    # Configurar proxy de Vite para apuntar a localhost (si no está ya)
     $ViteConfig = Join-Path $FrontendDir "vite.config.ts"
     if (Test-Path $ViteConfig) {
         $ViteContent = Get-Content $ViteConfig -Raw
@@ -155,7 +149,6 @@ function Invoke-Dev {
         }
     }
     
-    # Asegurar directorios
     Ensure-Directory $DataDir
     Ensure-Directory $LibraryDir
     
@@ -178,11 +171,9 @@ function Invoke-Dev {
 
 "@ -ForegroundColor Cyan
         
-        # Levantar backend en background
         Write-Step "Iniciando backend con Docker Compose..."
         docker compose up api redis -d
         
-        # Esperar a que el backend esté listo
         Write-Step "Esperando que el backend esté listo..."
         $maxAttempts = 30
         for ($i = 0; $i -lt $maxAttempts; $i++) {
@@ -197,7 +188,6 @@ function Invoke-Dev {
             }
         }
         
-        # Iniciar frontend
         Write-Step "Iniciando frontend con Vite..."
         Push-Location $FrontendDir
         try {
@@ -249,7 +239,6 @@ function Invoke-Prod {
         $health = Invoke-RestMethod -Uri "http://localhost:8000/api/v1/health" -TimeoutSec 10 -ErrorAction Stop
         Write-Success "API Health: $($health.status)"
         
-        # Verificar que el frontend se sirve
         $index = Invoke-WebRequest -Uri "http://localhost:8000" -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
         if ($index.Content -match "<div id=`"root`">") {
             Write-Success "Frontend SPA: cargado correctamente"
