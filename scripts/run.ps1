@@ -8,10 +8,10 @@
     - build: Solo compila el frontend a app/static/ (sin levantar servicios)
 
 .USAGE
-    .\run.ps1 -Mode dev    # Desarrollo con hot-reload
-    .\run.ps1 -Mode prod   # Producción con build integrado
-    .\run.ps1 -Mode build  # Solo build del frontend
-    .\run.ps1 -Mode prod -Clean  # Producción con limpieza previa
+    .\scripts\run.ps1 -Mode dev    # Desarrollo con hot-reload
+    .\scripts\run.ps1 -Mode prod   # Producción con build integrado
+    .\scripts\run.ps1 -Mode build  # Solo build del frontend
+    .\scripts\run.ps1 -Mode prod -Clean  # Producción con limpieza previa
 #>
 
 param(

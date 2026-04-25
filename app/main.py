@@ -97,7 +97,6 @@ app.include_router(files.router, prefix="/api/v1", tags=["Files"])
 # =============================================================================
 # 🎨 SERVICIO DE FRONTEND (SPA) - Producción
 # =============================================================================
-
 STATIC_DIR = Path(__file__).parent.parent / "static"
 
 if STATIC_DIR.exists() and (STATIC_DIR / "index.html").exists():
@@ -108,35 +107,45 @@ if STATIC_DIR.exists() and (STATIC_DIR / "index.html").exists():
     if assets_dir.exists():
         app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
     
-    # Fallback para SPA: servir index.html para rutas no-API
+    # ✅ Función auxiliar para servir archivos estáticos
+    from fastapi.responses import FileResponse, HTMLResponse
+    
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     @app.get("/{full_path:path}", include_in_schema=False)
-    async def serve_spa(request: Request, full_path: str):
-        """Sirve el frontend React para rutas no-API (SPA routing)."""
-        # Excluir explícitamente rutas de API
-        if full_path.startswith("api/"):
-            return JSONResponse(status_code=404, content={"detail": "API endpoint not found"})
-        
-        # Excluir rutas de documentación (solo en debug)
-        if settings.DEBUG and full_path in ("docs", "redoc", "openapi.json"):
+    async def serve_spa(full_path: str = ""):
+        """
+        Sirve el frontend React para rutas no-API.
+        Habilita client-side routing de React Router.
+        """
+        # 🚫 Excluir rutas de API explícitamente
+        if (
+            full_path.startswith("api/") or 
+            full_path in ("docs", "redoc", "openapi.json", "favicon.ico") or
+            full_path.startswith("assets/")
+        ):
             return JSONResponse(status_code=404, content={"detail": "Not found"})
         
-        # Servir index.html para cualquier otra ruta (habilita client-side routing)
+        # 📄 Servir index.html para SPA routing
         index_file = STATIC_DIR / "index.html"
         if index_file.exists():
             return FileResponse(str(index_file))
         
-        return JSONResponse(status_code=404, content={"detail": "Frontend not built"})
+        # Fallback si no se encuentra
+        return JSONResponse(
+            status_code=404, 
+            content={"detail": "Frontend not built. Run: cd frontend && npm run build"}
+        )
+
 else:
     # Modo desarrollo sin frontend buildado
-    @app.get("/")
+    @app.get("/", include_in_schema=False)
     async def root():
         return {
             "message": "Manganer API",
             "docs": "/api/docs" if settings.DEBUG else None,
             "health": "/api/v1/health",
-            "note": "Build frontend with: cd frontend && npm run build, then copy to app/static/"
+            "note": "Build frontend: cd frontend && npm run build, then copy dist/* to app/static/"
         }
-
 
 # =============================================================================
 # 🏁 Punto de entrada
