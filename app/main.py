@@ -37,10 +37,10 @@ async def lifespan(app: FastAPI):
     # Iniciar Watchdog para escaneo de archivos
     handler = MangaWatchdogHandler(cooldown=2.0, task_func=process_new_file_task)
     observer = Observer()
-    observer.schedule(handler, str(settings.DATA_DIR), recursive=True)
+    observer.schedule(handler, str(settings.LIBRARY_DIR), recursive=True)
     observer.start()
     app.state.watcher = observer
-    logger.info(f"👁️ Watchdog activo en {settings.DATA_DIR}")
+    logger.info(f"👁️ Watchdog activo en {settings.LIBRARY_DIR}")
     
     # Inicializar servicios globales
     app.state.metadata_fetcher = MetadataFetcher(
