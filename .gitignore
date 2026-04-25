@@ -1,0 +1,238 @@
+# =============================================================================
+# Manganer - .gitignore
+# Python + React + Docker + Windows
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Python / FastAPI
+# -----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+*.log
+logs/
+*.sqlite
+*.db
+db.sqlite3
+data/*.db
+data/*.db-wal
+data/*.db-shm
+*.sql
+alembic/versions/*.py
+!alembic/versions/README
+!alembic/versions/__init__.py
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# -----------------------------------------------------------------------------
+# Node / React / Vite / Frontend
+# -----------------------------------------------------------------------------
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build output
+frontend/dist/
+frontend/.vite/
+frontend/build/
+frontend/.next/
+frontend/out/
+frontend/.nuxt/
+frontend/.output/
+
+# Cache
+frontend/.cache/
+frontend/.eslintcache
+frontend/.turbo/
+
+# IDE / Editor
+frontend/.vscode/
+frontend/.idea/
+*.swp
+*.swo
+*~
+
+# Environment variables (frontend)
+frontend/.env*.local
+frontend/.env*.dev
+frontend/.env*.prod
+
+# -----------------------------------------------------------------------------
+# Docker
+# -----------------------------------------------------------------------------
+.docker/
+docker-compose.override.yml
+*.dockerignore
+!Dockerfile
+!docker-compose.yml
+
+# Docker build cache (local)
+.docker/buildx/
+
+# -----------------------------------------------------------------------------
+# Windows
+# -----------------------------------------------------------------------------
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+*.msi
+*.msm
+*.msp
+[System Volume Information]/
+*.tmp
+*.temp
+*.log
+
+# -----------------------------------------------------------------------------
+# macOS (por si acaso)
+# -----------------------------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# -----------------------------------------------------------------------------
+# IDE / Editors
+# -----------------------------------------------------------------------------
+# VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+.history/
+
+# JetBrains / PyCharm
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# -----------------------------------------------------------------------------
+# Testing / Coverage
+# -----------------------------------------------------------------------------
+.coverage
+coverage.xml
+coverage.json
+htmlcov/
+.tox/
+.nox/
+*.cover
+
+# -----------------------------------------------------------------------------
+# Environment Variables (SENSITIVE - NEVER COMMIT)
+# -----------------------------------------------------------------------------
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+*.env
+!example.env
+
+# API Keys / Secrets (patterns to catch common names)
+*secret*
+*api_key*
+*auth_token*
+*password*
+*credential*
+
+# -----------------------------------------------------------------------------
+# User-specific Files
+# -----------------------------------------------------------------------------
+*.user
+*.local
+*.private
+
+# -----------------------------------------------------------------------------
+# Documentation / Temporary
+# -----------------------------------------------------------------------------
+*.bak
+*.backup
+*.orig
+*.rej
+*.patch
+*.diff
+*.tmp
+*.temp
+*.swp
+*.swo
+
+# -----------------------------------------------------------------------------
+# Manganer Specific - Data & Library (USER CONTENT)
+# -----------------------------------------------------------------------------
+# User manga files - NEVER commit personal library
+library/
+*.cbz
+*.cbr
+*.zip
+*.rar
+*.7z
+
+# User data directory - database and cache
+data/
+!data/.gitkeep
+
+# Static frontend build (generated, not source)
+app/static/
+!app/static/.gitkeep
+
+# Generated thumbnails / cache
+app/cache/
+app/thumbnails/
+*.phash
+*.hash
+
+# Local configuration overrides
+config.local.py
+settings.local.py
+
+# -----------------------------------------------------------------------------
+# CI/CD (keep config, ignore secrets)
+# -----------------------------------------------------------------------------
+.github/workflows/*.yml
+!.github/workflows/ci.yml
+!.github/workflows/deploy.yml
+README.md
