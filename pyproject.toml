@@ -1,0 +1,39 @@
+[project]
+name = "manganer"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "sqlalchemy>=2.0.36",
+    "alembic>=1.14.0",
+    "pydantic-settings>=2.6.0",
+    "psutil>=6.1.0",
+    "python-dotenv>=1.0.1",
+    "celery[redis]>=5.3.0",
+    "redis>=5.0.0",
+    "tenacity>=9.0.0",
+    "watchdog>=3.0.0",
+    "imagehash>=4.3.0",
+    "Pillow>=10.2.0",
+    "rarfile>=4.1",
+    "httpx[http2]>=0.28.0",
+    "defusedxml>=0.7.1",
+    "pydantic-xml>=2.12.0",
+    "pyvips>=2.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.8.0",
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "httpx>=0.28.0",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 99
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

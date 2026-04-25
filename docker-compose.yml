@@ -1,0 +1,54 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_URL=sqlite:///./data/manganer.db
+      - REDIS_URL=redis://redis:6379/0
+      - DATA_DIR=/app/data
+      - WORKERS=4
+    volumes:
+      - ./data:/app/data
+      - ./library:/app/library
+      - ./app/static:/app/static
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  worker:
+    build: .
+    command: celery -A app.core.celery_app worker --loglevel=info --concurrency=4 --pool=prefork
+    environment:
+      - DB_URL=sqlite:///./data/manganer.db
+      - REDIS_URL=redis://redis:6379/0
+      - DATA_DIR=/app/data
+    volumes:
+      - ./data:/app/data
+      - ./library:/app/library
+      - ./app/static:/app/static
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    volumes:
+      - redis_data:/data
+
+volumes:
+  redis_data:
