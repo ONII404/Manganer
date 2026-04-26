@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.database import Base, engine
 
-# API routers
+# API routers (Importación con alias para evitar conflictos)
 from app.api import health as health_router
 from app.api import tasks as tasks_router
 from app.api import files as files_router
@@ -42,12 +42,10 @@ class SimpleLibraryPoller:
         self.interval = interval
         self.running = True
         self.known_files: set[str] = set()
-        
         if self.library_path.exists():
             for root, _, files in os.walk(self.library_path):
                 for file in files:
                     self.known_files.add(os.path.join(root, file))
-        
         self.thread = threading.Thread(target=self._poll, daemon=True)
 
     def start(self) -> None:
@@ -103,18 +101,14 @@ async def lifespan(app: FastAPI):
         api_key=settings.DEEPL_API_KEY, target_lang=settings.DEFAULT_LANG.upper()
     )
     logger.info("🌐 Servicios listos")
-    
     yield
-    
-    if hasattr(app.state, "watcher"):
-        app.state.watcher.stop()
-    if hasattr(app.state, "translator"):
-        app.state.translator.close()
+    if hasattr(app.state, "watcher"): app.state.watcher.stop()
+    if hasattr(app.state, "translator"): app.state.translator.close()
     engine.dispose()
 
 
 # =============================================================================
-# 🚀 FastAPI App - URLs de docs SIN /api para evitar conflictos
+# 🚀 App FastAPI
 # =============================================================================
 app = FastAPI(
     title=settings.APP_NAME,
@@ -128,14 +122,14 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"] if settings.DEBUG else ["http://localhost:3000", "http://localhost:8000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
 
 # =============================================================================
-# 📡 Routers de API
+# 📡 INCLUSIÓN DE ROUTERS (Prefijos alineados)
 # =============================================================================
+# NOTA: files.py, tasks.py y opds.py ya tienen su propio prefix ("/files", "/tasks", "/opds")
+# Por eso aquí solo usamos el prefijo base "/api/v1"
 app.include_router(health_router.router, prefix="/api/v1")
 app.include_router(tasks_router.router, prefix="/api/v1")
 app.include_router(files_router.router, prefix="/api/v1")
@@ -143,59 +137,37 @@ app.include_router(opds_router.router, prefix="/api/v1")
 
 
 # =============================================================================
-# 🎨 Frontend SPA - Solo para rutas estáticas NO-API y NO-docs
+# 🎨 Frontend SPA
 # =============================================================================
 STATIC_DIR = Path(__file__).parent.parent / "static"
 
 if STATIC_DIR.exists() and (STATIC_DIR / "index.html").exists():
     logger.info(f"🎨 Frontend en {STATIC_DIR}")
-    
-    # Montar assets estáticos PRIMERO (antes del catch-all)
     assets_dir = STATIC_DIR / "assets"
     if assets_dir.exists():
         app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
     
-    # ✅ Ruta raíz para SPA
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     async def serve_spa_root():
         return FileResponse(str(STATIC_DIR / "index.html"))
     
-    # ✅ Catch-all para React Router - PERO EXCLUYENDO docs y API
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa_catchall(request: Request):
         path = request.url.path
-        
-        # ❌ NO servir SPA para estas rutas (dejar que FastAPI las maneje)
         if path in ["/docs", "/redoc", "/openapi.json"]:
-            raise HTTPException(status_code=404, detail="Let FastAPI handle this")
-        
-        # ❌ NO servir para API o assets
+            raise HTTPException(status_code=404)
         if path.startswith("/api/") or path.startswith("/assets/"):
-            raise HTTPException(status_code=404, detail="API or asset path")
-        
-        # ✅ Servir index.html para React Router
+            raise HTTPException(status_code=404)
         index_file = STATIC_DIR / "index.html"
         if index_file.exists():
             return FileResponse(str(index_file))
-        
-        raise HTTPException(status_code=404, detail="Frontend not found")
+        raise HTTPException(status_code=404)
 else:
     @app.get("/", include_in_schema=False)
     async def root():
-        return {
-            "message": "Manganer API",
-            "docs": "/docs",
-            "health": "/api/v1/health",
-        }
+        return {"message": "Manganer API", "docs": "/docs", "health": "/api/v1/health"}
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        "app.main:app",
-        host="0.0.0.0",
-        port=8000,
-        workers=settings.WORKERS,
-        reload=settings.DEBUG,
-        reload_dirs=["app"] if settings.DEBUG else None,
-    )
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, workers=settings.WORKERS, reload=settings.DEBUG, reload_dirs=["app"] if settings.DEBUG else None)
