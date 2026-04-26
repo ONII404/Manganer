@@ -1,122 +1,176 @@
 # app/services/hashing.py
+"""
+Servicios de hashing para archivos de manga (.cbz, .cbr).
+Calcula hashes SHA-256, tamaño, tipo y perceptual hash (phash) para deduplicación.
+Compatible con Python 3.13+ (imghdr fue eliminado).
+"""
+
 import hashlib
-import imagehash
-import pyvips
-from PIL import Image
-import io
-from pathlib import Path
 import zipfile
-import rarfile
-import logging
+from pathlib import Path
+from typing import Union
 
-logger = logging.getLogger(__name__)
-
-# ✅ Límite estricto de caché pyvips (50MB para hashing)
 try:
-    pyvips.vips_cache_set_max(50_000_000)
-except Exception:
-    pass  # Ignorar si ya está configurado o no disponible
+    import imagehash
+    from PIL import Image
+    HAS_IMAGEHASH = True
+except ImportError:
+    HAS_IMAGEHASH = False
 
 
-def compute_sha256(file_path: Path) -> str:
-    """Calcula SHA-256 de un archivo en chunks para eficiencia de memoria."""
-    sha = hashlib.sha256()
-    with open(file_path, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            sha.update(chunk)
-    return sha.hexdigest()
-
-
-def _extract_first_image(file_path: Path, f_type: str) -> bytes | None:
+def compute_file_hashes(file_path: Union[str, Path]) -> dict:
     """
-    Extrae la primera imagen de un archivo comprimido sin descomprimir todo.
-    Prioriza portadas/cubiertas típicas de manga.
+    Calcular hashes y metadatos para un archivo .cbz/.cbr.
+    
+    Args:
+        file_path: Ruta del archivo (acepta str o pathlib.Path)
+    
+    Returns:
+        dict con:
+            - sha256: Hash SHA-256 del contenido completo
+            - size: Tamaño en bytes
+            - type: Extensión sin punto ('cbz', 'cbr')
+            - phash: Perceptual hash de la primera imagen (si está disponible)
+    
+    Raises:
+        FileNotFoundError: Si el archivo no existe
+        ValueError: Si la extensión no es .cbz o .cbr
+    """
+    # ✅ FIX CRÍTICO: Convertir a Path si es string
+    fp = Path(file_path) if isinstance(file_path, str) else file_path
+    
+    # Validaciones básicas
+    if not fp.exists():
+        raise FileNotFoundError(f"Archivo no encontrado: {fp}")
+    
+    suffix = fp.suffix.lower()
+    if suffix not in ('.cbz', '.cbr'):
+        raise ValueError(f"Extensión no soportada: {suffix}. Esperado: .cbz o .cbr")
+    
+    file_type = suffix.lstrip('.')
+    
+    # Calcular SHA-256 del archivo completo
+    sha256_hash = hashlib.sha256()
+    with open(fp, "rb") as f:
+        # Leer en chunks para manejar archivos grandes sin consumir memoria
+        for chunk in iter(lambda: f.read(8192), b""):
+            sha256_hash.update(chunk)
+    
+    # Obtener tamaño
+    file_size = fp.stat().st_size
+    
+    # Calcular perceptual hash de la primera imagen (para deduplicación visual)
+    phash = None
+    if HAS_IMAGEHASH:
+        try:
+            phash = _compute_phash_from_archive(fp)
+        except Exception:
+            # Si falla el phash, no bloqueamos el procesamiento
+            pass
+    
+    return {
+        "sha256": sha256_hash.hexdigest(),
+        "size": file_size,
+        "type": file_type,
+        "phash": str(phash) if phash else None,
+    }
+
+
+def _compute_phash_from_archive(archive_path: Path) -> str | None:
+    """
+    Extraer la primera imagen válida de un .cbz/.cbr y calcular su perceptual hash.
+    
+    Args:
+        archive_path: Ruta al archivo .cbz o .cbr (ya validado como Path)
+    
+    Returns:
+        str con el phash, o None si no se pudo calcular
     """
     try:
-        if f_type == "cbz":
-            with zipfile.ZipFile(file_path, 'r') as z:
-                names = [n for n in z.namelist() 
-                        if n.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))]
-                if not names:
-                    return None
-                # Priorizar nombres que parezcan portada
-                for priority in ['cover', '00', '01', '1.', 'folder']:
-                    candidate = next((n for n in names if priority in n.lower()), None)
-                    if candidate:
-                        return z.read(candidate)
-                return z.read(names[0])
+        with zipfile.ZipFile(archive_path, 'r') as zf:
+            # Lista de extensiones de imagen válidas
+            image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')
+            
+            # Ordenar archivos para procesar en orden consistente
+            names = sorted(n for n in zf.namelist() if not n.endswith('/'))
+            
+            for name in names:
+                # Ignorar archivos de metadatos o carpetas
+                if any(skip in name.lower() for skip in ['__macosx', '.ds_store', 'comicinfo.xml']):
+                    continue
                 
-        elif f_type == "cbr":
-            with rarfile.RarFile(str(file_path)) as r:
-                names = [n for n in r.namelist() 
-                        if n.lower().endswith(('.jpg', '.jpeg', '.png'))]
-                if not names:
-                    return None
-                for priority in ['cover', '00', '01', '1.', 'folder']:
-                    candidate = next((n for n in names if priority in n.lower()), None)
-                    if candidate:
-                        return r.read(candidate)
-                return r.read(names[0])
+                # Verificar si es una imagen por extensión
+                if not name.lower().endswith(image_extensions):
+                    continue
                 
-    except Exception as e:
-        logger.warning(f"No se pudo extraer imagen de {file_path.name}: {e}")
+                try:
+                    # Extraer y abrir la imagen
+                    with zf.open(name) as img_file:
+                        # imagehash necesita un archivo real o BytesIO
+                        import io
+                        img = Image.open(io.BytesIO(img_file.read()))
+                        
+                        # Convertir a RGB si es necesario (para manejar PNG con alpha, etc.)
+                        if img.mode not in ('RGB', 'L'):
+                            img = img.convert('RGB')
+                        
+                        # Calcular perceptual hash (8x8 = 64 bits, buen balance precisión/velocidad)
+                        phash = imagehash.phash(img, hash_size=8)
+                        return str(phash)
+                        
+                except Exception:
+                    # Si falla esta imagen, intentar con la siguiente
+                    continue
+                    
+    except zipfile.BadZipFile:
+        # Archivo corrupto o no es un ZIP válido
+        pass
+    except Exception:
+        # Cualquier otro error (PIL, imagehash, etc.)
+        pass
+    
     return None
 
 
-def compute_phash(img_data: bytes) -> str:  # ✅ CORREGIDO: parámetro completo con tipo
+def verify_file_integrity(file_path: Union[str, Path], expected_hash: str) -> bool:
     """
-    Calcula perceptual hash (pHash) vía pyvips en modo streaming.
-    Retorna string hex de 16 caracteres (64-bit hash).
-    """
-    if not img_data:  # ✅ CORREGIDO: usar img_data, no img_
-        return ""
+    Verificar que un archivo coincide con un hash SHA-256 esperado.
     
+    Args:
+        file_path: Ruta del archivo a verificar
+        expected_hash: Hash SHA-256 esperado (hex string)
+    
+    Returns:
+        True si los hashes coinciden, False en caso contrario
+    """
     try:
-        # Cargar imagen desde buffer (sin archivo temporal)
-        img = pyvips.Image.new_from_buffer(img_data, "")
+        fp = Path(file_path) if isinstance(file_path, str) else file_path
+        if not fp.exists():
+            return False
         
-        # Redimensionar a 32x32 para pHash estándar
-        scale = 32.0 / max(img.width, img.height, 1)
-        img = img.resize(scale, vscale=scale)
+        sha256_hash = hashlib.sha256()
+        with open(fp, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                sha256_hash.update(chunk)
         
-        # Convertir a escala de grises
-        img = img.colourspace("b-w")
-        
-        # Exportar a JPEG de baja calidad para reducir ruido
-        buf = img.jpegsave_buffer(Q=75, strip=True)
-        
-        # Calcular pHash con imagehash (8x8 = 64 bits)
-        with Image.open(io.BytesIO(buf)) as pil_img:
-            ph = imagehash.phash(pil_img, hash_size=8)
-        
-        return str(ph)
-        
-    except Exception as e:
-        logger.error(f"Error calculando pHash: {e}")
-        return ""
+        return sha256_hash.hexdigest() == expected_hash.lower()
+    except Exception:
+        return False
 
 
-def compute_file_hashes(file_path: Path) -> dict:
+def get_file_type(file_path: Union[str, Path]) -> str | None:
     """
-    Calcula todos los hashes necesarios para un archivo de manga.
-    Retorna dict con: sha256, phash, size, type.
+    Obtener el tipo de archivo basado en la extensión.
+    
+    Args:
+        file_path: Ruta del archivo
+    
+    Returns:
+        'cbz', 'cbr', o None si no es reconocido
     """
-    suffix = file_path.suffix.lower()
-    f_type = "cbz" if suffix == ".cbz" else "cbr"
+    fp = Path(file_path) if isinstance(file_path, str) else file_path
+    suffix = fp.suffix.lower()
     
-    # SHA-256 para detección de duplicados exactos
-    sha = compute_sha256(file_path)
-    
-    # Metadatos básicos
-    size = file_path.stat().st_size
-    
-    # pHash para detección de versiones similares
-    img_buf = _extract_first_image(file_path, f_type)
-    ph = compute_phash(img_buf) if img_buf else ""
-    
-    return {
-        "sha256": sha,
-        "phash": ph,
-        "size": size,
-        "type": f_type,
-    }
+    if suffix in ('.cbz', '.cbr'):
+        return suffix.lstrip('.')
+    return None
