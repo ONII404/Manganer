@@ -1,18 +1,27 @@
 # app/main.py
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
-from watchdog.observers import Observer
 from pathlib import Path
 import logging
-import asyncio
+import os
+import threading
+import time
 
-# Config
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+# App config & database
 from app.config import settings
-from app.database import Base, engine, get_db
-from app.api import health, tasks, opds, files
+from app.database import Base, engine
+
+# API routers
+from app.api import health as health_router
+from app.api import tasks as tasks_router
+from app.api import files as files_router
+from app.api import opds as opds_router
+
+# Services & tasks
 from app.services.watchdog_handler import MangaWatchdogHandler
 from app.tasks.scan_tasks import process_new_file_task
 from app.services.metadata_fetcher import MetadataFetcher
@@ -25,60 +34,97 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+class SimpleLibraryPoller:
+    """Poller nativo para Docker+Windows."""
+    def __init__(self, library_path: str, handler, interval: float = 2.0):
+        self.library_path = Path(library_path)
+        self.handler = handler
+        self.interval = interval
+        self.running = True
+        self.known_files: set[str] = set()
+        
+        if self.library_path.exists():
+            for root, _, files in os.walk(self.library_path):
+                for file in files:
+                    self.known_files.add(os.path.join(root, file))
+        
+        self.thread = threading.Thread(target=self._poll, daemon=True)
+
+    def start(self) -> None:
+        logger.info(f"👁️ Poller activo en {self.library_path}")
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.running = False
+        self.thread.join()
+
+    def _poll(self) -> None:
+        while self.running:
+            try:
+                if not self.library_path.exists():
+                    time.sleep(self.interval)
+                    continue
+                current_files: set[str] = set()
+                for root, _, files in os.walk(self.library_path):
+                    for file in files:
+                        current_files.add(os.path.join(root, file))
+                new_files = current_files - self.known_files
+                for file_path in new_files:
+                    if file_path.lower().endswith(('.cbz', '.cbr')):
+                        logger.debug(f"🔍 Nuevo: {file_path}")
+                        if hasattr(self.handler, '_on_event'):
+                            self.handler._on_event(file_path)
+                self.known_files = current_files
+            except Exception as e:
+                logger.error(f"❌ Error Poller: {e}")
+            time.sleep(self.interval)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifecycle manager para inicialización y shutdown limpio."""
     logger.info("🚀 Inicializando Manganer...")
-    
-    # Crear tablas de base de datos
     Base.metadata.create_all(bind=engine)
-    logger.info("✅ Base de datos inicializada con WAL")
+    logger.info("✅ DB inicializada")
     
-    # Iniciar Watchdog para escaneo de archivos
-    handler = MangaWatchdogHandler(cooldown=2.0, task_func=process_new_file_task)
-    observer = Observer()
-    observer.schedule(handler, str(settings.LIBRARY_DIR), recursive=True)
-    observer.start()
-    app.state.watcher = observer
-    logger.info(f"👁️ Watchdog activo en {settings.LIBRARY_DIR}")
+    try:
+        Path(settings.LIBRARY_DIR).mkdir(parents=True, exist_ok=True)
+        handler = MangaWatchdogHandler(cooldown=2.0, task_func=process_new_file_task)
+        poller = SimpleLibraryPoller(settings.LIBRARY_DIR, handler, interval=2.0)
+        poller.start()
+        app.state.watcher = poller
+        logger.info(f"✅ Poller en {settings.LIBRARY_DIR}")
+    except Exception as e:
+        logger.error(f"❌ Watchdog: {e}")
     
-    # Inicializar servicios globales
     app.state.metadata_fetcher = MetadataFetcher(
-        api_keys={
-            "anilist": settings.ANILIST_CLIENT_ID,
-            "mal": settings.MAL_CLIENT_ID,
-        }
+        api_keys={"anilist": settings.ANILIST_CLIENT_ID, "mal": settings.MAL_CLIENT_ID}
     )
     app.state.translator = DeepLTranslator(
-        api_key=settings.DEEPL_API_KEY,
-        target_lang=settings.DEFAULT_LANG.upper()
+        api_key=settings.DEEPL_API_KEY, target_lang=settings.DEFAULT_LANG.upper()
     )
-    logger.info("🌐 Servicios de metadatos y traducción inicializados")
+    logger.info("🌐 Servicios listos")
     
     yield
     
-    # Shutdown limpio
-    logger.info("🛑 Cerrando servicios...")
     if hasattr(app.state, "watcher"):
         app.state.watcher.stop()
-        app.state.watcher.join()
     if hasattr(app.state, "translator"):
         app.state.translator.close()
     engine.dispose()
-    logger.info("✅ Shutdown completado")
 
 
-# Crear aplicación FastAPI
+# =============================================================================
+# 🚀 FastAPI App - URLs de docs SIN /api para evitar conflictos
+# =============================================================================
 app = FastAPI(
     title=settings.APP_NAME,
     version="0.1.0",
     lifespan=lifespan,
-    docs_url="/api/docs" if settings.DEBUG else None,
-    redoc_url="/api/redoc" if settings.DEBUG else None,
-    openapi_url="/api/openapi.json" if settings.DEBUG else None,
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
 )
 
-# CORS middleware (ajustar para producción)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"] if settings.DEBUG else ["http://localhost:3000", "http://localhost:8000"],
@@ -87,69 +133,61 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Incluir routers de API
-app.include_router(health.router, prefix="/api/v1", tags=["System"])
-app.include_router(tasks.router, prefix="/api/v1", tags=["Tasks"])
-app.include_router(opds.router, prefix="/api/v1", tags=["OPDS"])
-app.include_router(files.router, prefix="/api/v1", tags=["Files"])
+# =============================================================================
+# 📡 Routers de API
+# =============================================================================
+app.include_router(health_router.router, prefix="/api/v1")
+app.include_router(tasks_router.router, prefix="/api/v1")
+app.include_router(files_router.router, prefix="/api/v1")
+app.include_router(opds_router.router, prefix="/api/v1")
 
 
 # =============================================================================
-# 🎨 SERVICIO DE FRONTEND (SPA) - Producción
+# 🎨 Frontend SPA - Solo para rutas estáticas NO-API y NO-docs
 # =============================================================================
 STATIC_DIR = Path(__file__).parent.parent / "static"
 
 if STATIC_DIR.exists() and (STATIC_DIR / "index.html").exists():
-    logger.info(f"🎨 Frontend estático detectado en {STATIC_DIR}")
+    logger.info(f"🎨 Frontend en {STATIC_DIR}")
     
-    # Montar assets estáticos (JS, CSS, imágenes)
+    # Montar assets estáticos PRIMERO (antes del catch-all)
     assets_dir = STATIC_DIR / "assets"
     if assets_dir.exists():
         app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
     
-    # ✅ Función auxiliar para servir archivos estáticos
-    from fastapi.responses import FileResponse, HTMLResponse
-    
+    # ✅ Ruta raíz para SPA
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    async def serve_spa_root():
+        return FileResponse(str(STATIC_DIR / "index.html"))
+    
+    # ✅ Catch-all para React Router - PERO EXCLUYENDO docs y API
     @app.get("/{full_path:path}", include_in_schema=False)
-    async def serve_spa(full_path: str = ""):
-        """
-        Sirve el frontend React para rutas no-API.
-        Habilita client-side routing de React Router.
-        """
-        # 🚫 Excluir rutas de API explícitamente
-        if (
-            full_path.startswith("api/") or 
-            full_path in ("docs", "redoc", "openapi.json", "favicon.ico") or
-            full_path.startswith("assets/")
-        ):
-            return JSONResponse(status_code=404, content={"detail": "Not found"})
+    async def serve_spa_catchall(request: Request):
+        path = request.url.path
         
-        # 📄 Servir index.html para SPA routing
+        # ❌ NO servir SPA para estas rutas (dejar que FastAPI las maneje)
+        if path in ["/docs", "/redoc", "/openapi.json"]:
+            raise HTTPException(status_code=404, detail="Let FastAPI handle this")
+        
+        # ❌ NO servir para API o assets
+        if path.startswith("/api/") or path.startswith("/assets/"):
+            raise HTTPException(status_code=404, detail="API or asset path")
+        
+        # ✅ Servir index.html para React Router
         index_file = STATIC_DIR / "index.html"
         if index_file.exists():
             return FileResponse(str(index_file))
         
-        # Fallback si no se encuentra
-        return JSONResponse(
-            status_code=404, 
-            content={"detail": "Frontend not built. Run: cd frontend && npm run build"}
-        )
-
+        raise HTTPException(status_code=404, detail="Frontend not found")
 else:
-    # Modo desarrollo sin frontend buildado
     @app.get("/", include_in_schema=False)
     async def root():
         return {
             "message": "Manganer API",
-            "docs": "/api/docs" if settings.DEBUG else None,
+            "docs": "/docs",
             "health": "/api/v1/health",
-            "note": "Build frontend: cd frontend && npm run build, then copy dist/* to app/static/"
         }
 
-# =============================================================================
-# 🏁 Punto de entrada
-# =============================================================================
 
 if __name__ == "__main__":
     import uvicorn

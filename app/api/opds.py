@@ -1,3 +1,4 @@
+# app/api/opds.py
 from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
@@ -8,7 +9,8 @@ from app.database import get_db
 from app.models.file import MangaFile
 from app.services.comic_info import ComicInfoV2
 
-router = APIRouter(prefix="/opds", tags=["OPDS"])
+# ✅ tags definido aquí, NO en include_router() de main.py
+router = APIRouter(tags=["OPDS"])
 
 def get_auth(request: Request) -> bool:
     """Auth básica opcional para OPDS."""
@@ -18,6 +20,7 @@ def get_auth(request: Request) -> bool:
     # Implementar token verification aquí si es necesario
     return True
 
+# ✅ Rutas: GET /api/v1/opds/v1.2/catalog.xml
 @router.get("/v1.2/catalog.xml")
 def opds_12_catalog(
     db: Session = Depends(get_db),
@@ -77,6 +80,7 @@ def opds_12_catalog(
         media_type="application/atom+xml"
     )
 
+# ✅ Rutas: GET /api/v1/opds/v2.0/catalog.json
 @router.get("/v2.0/catalog.json")
 def opds_20_catalog(
     db: Session = Depends(get_db),
@@ -132,6 +136,7 @@ def opds_20_catalog(
     
     return catalog
 
+# ✅ Rutas: GET /api/v1/opds/v1.2/stream/{file_id}
 @router.get("/v1.2/stream/{file_id}")
 def opds_stream(file_id: int, db: Session = Depends(get_db), _: bool = Depends(get_auth)):
     """Streaming directo del archivo .cbz/.cbr (para lectores)."""
@@ -141,6 +146,7 @@ def opds_stream(file_id: int, db: Session = Depends(get_db), _: bool = Depends(g
     # En producción: usar FileResponse con X-Accel-Redirect / sendfile
     return {"stream_url": f"file://{item.file_path}", "content_type": "application/x-cbz"}
 
+# ✅ Rutas: GET /api/v1/opds/v1.2/thumbnail/{file_id}
 @router.get("/v1.2/thumbnail/{file_id}")
 def opds_thumbnail(file_id: int, db: Session = Depends(get_db), _: bool = Depends(get_auth)):
     """Miniatura pre-generada (placeholder)."""

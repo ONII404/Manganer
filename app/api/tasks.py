@@ -1,3 +1,4 @@
+# app/api/tasks.py
 import json
 import asyncio
 from fastapi import APIRouter
@@ -8,17 +9,20 @@ from app.tasks.manga_tasks import process_batch_task
 from app.core.redis_client import get_async_redis
 import logging
 
-router = APIRouter(prefix="/tasks", tags=["Tasks"])
+# ✅ tags definido aquí, NO en include_router() de main.py
+router = APIRouter(tags=["Tasks"])
 logger = logging.getLogger(__name__)
 
 class TaskSubmitRequest(BaseModel):
     items: list[dict]
 
+# ✅ Ruta: POST /api/v1/tasks/submit
 @router.post("/submit")
 def submit_task(req: TaskSubmitRequest):
     task = process_batch_task.delay(req.items)
     return {"task_id": task.id, "status": "queued"}
 
+# ✅ Ruta: GET /api/v1/tasks/stream/{task_id}
 @router.get("/stream/{task_id}")
 async def stream_task(task_id: str):
     async def event_stream():
